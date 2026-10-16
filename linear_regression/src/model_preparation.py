@@ -48,21 +48,36 @@ class NaturalGasModelDataBuilder:
 
     def _read_source(self, source_name: str, filename: str) -> pd.DataFrame:
         file_path = self.cleaned_data_dir / filename
+
         if not file_path.exists():
             raise FileNotFoundError(f"Cleaned source not found: {file_path}")
+
         frame = pd.read_csv(file_path) if file_path.suffix == ".csv" else pd.read_excel(file_path)
+
         if "Month_Year" not in frame:
             raise ValueError(f"{filename} has no Month_Year column.")
+
+        # NEW: Convert dates to ISO format (YYYY-MM-DD)
+        frame["Month_Year"] = pd.to_datetime(
+            frame["Month_Year"],
+            format="%Y-%m-%d",
+            errors="raise"
+        ).dt.strftime("%Y-%m-%d")
+
+        # Check for duplicate months
         if frame["Month_Year"].duplicated().any():
             raise ValueError(f"{filename} has duplicate Month_Year values.")
 
+        # Rename columns
         rename_map = {}
         for column in frame.columns:
             if column == "Month_Year":
                 continue
+
             rename_map[column] = self.CORE_COLUMN_NAMES.get(
                 column, f"{source_name}_{self._snake_case(column)}"
             )
+
         return frame.rename(columns=rename_map)
 
     def build(self) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -75,9 +90,13 @@ class NaturalGasModelDataBuilder:
         for source in sources[1:]:
             master = master.merge(source, on="Month_Year", how="outer", validate="one_to_one")
 
-        master["Month_Year"] = pd.to_datetime(master["Month_Year"], format="%d-%m-%Y")
+        master["Month_Year"] = pd.to_datetime(
+            master["Month_Year"],
+            format="%Y-%m-%d"
+            )
         master = master.sort_values("Month_Year").reset_index(drop=True)
-        master["Month_Year"] = master["Month_Year"].dt.strftime("%d-%m-%Y")
+        master["Month_Year"] = master["Month_Year"].dt.strftime("%Y-%m-%d")
+        
         model_ready = master.dropna().reset_index(drop=True)
         return master, model_ready
 

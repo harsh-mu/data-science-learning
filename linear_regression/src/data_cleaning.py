@@ -53,22 +53,48 @@ class NaturalGasDataCleaner:
 
     def clean_frame(self, frame: pd.DataFrame, source_name: str) -> pd.DataFrame:
         """Standardize dates, values, and frequency for one source table."""
+
         frame = frame.dropna(axis=1, how="all").copy()
-        dates = pd.to_datetime(frame.pop(self._date_column(frame)), errors="coerce")
+
+        # Extract the raw date column
+        raw_dates = frame.pop(self._date_column(frame))
+
+        # Parse dates; explicit formats should be configured for known sources
+        dates = pd.to_datetime(raw_dates, errors="coerce")
+
+        # Remove rows without valid dates
         frame = frame.loc[dates.notna()].dropna(how="all").copy()
         dates = dates.loc[frame.index]
+
+        # Convert numerical columns
         for column in frame.columns:
             frame[column] = self._to_numeric_when_possible(frame[column])
 
-        frame.insert(0, "Month_Year", dates.dt.to_period("M").dt.to_timestamp())
-        if frame["Month_Year"].duplicated().any():
-            aggregation = "mean" if "henry_hub" in source_name.casefold() else "last"
-            frame = frame.groupby("Month_Year", as_index=False).agg(aggregation)
+        # Normalize all dates to the first day of their month
+        frame.insert(
+            0,
+            "Month_Year",
+            dates.dt.to_period("M").dt.to_timestamp()
+        )
 
-        frame["Month_Year"] = frame["Month_Year"].dt.strftime("%d-%m-%Y")
-        return frame.sort_values(
-            "Month_Year", key=lambda key: pd.to_datetime(key, format="%d-%m-%Y")
-        ).reset_index(drop=True)
+        # Aggregate duplicate months
+        if frame["Month_Year"].duplicated().any():
+            aggregation = (
+                "mean" if "henry_hub" in source_name.casefold()
+                else "last"
+            )
+
+            frame = frame.groupby(
+                "Month_Year", as_index=False
+            ).agg(aggregation)
+
+        # Sort chronologically while dates are datetime objects
+        frame = frame.sort_values("Month_Year").reset_index(drop=True)
+
+        # Export dates in unambiguous ISO format
+        frame["Month_Year"] = frame["Month_Year"].dt.strftime("%Y-%m-%d")
+
+        return frame
 
     def clean_csv(self, file_path: Path) -> Path:
         frame = pd.read_csv(file_path, skiprows=self._csv_header_row(file_path))
